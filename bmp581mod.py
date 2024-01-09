@@ -136,7 +136,7 @@ class Bmp581(BaseSensor, Iterator):
         if int_mode is not None:
             val &= 0xFE  # mask
             val |= int_mode
-        print(f"DBG:int_conf: {val}")
+        # print(f"DBG:int_conf: {val}")
         self._write_reg(0x14, val, 1)
 
     def _int_source_sel(
@@ -162,7 +162,7 @@ class Bmp581(BaseSensor, Iterator):
         if drdy_data_reg_en is not None:
             val &= 0xFE  # mask
             val |= drdy_data_reg_en
-        print(f"DBG:int_source_sel: {val}")
+        # print(f"DBG:int_source_sel: {val}")
         self._write_reg(0x15, val, 1)
 
     def _fifo_config(
