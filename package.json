@@ -2,12 +2,10 @@
   "urls": [
     ["bmp581mod.py", "github:octaprog7/bmp581/bmp581mod.py"],
     ["sensor_pack/__init__.py", "github:octaprog7/bmp581/sensor_pack/__init__.py"],
+    ["sensor_pack/__init__.py", "github:octaprog7/bmp581/sensor_pack/bmp_common.py.py"],
     ["sensor_pack/base_sensor.py", "github:octaprog7/bmp581/sensor_pack/base_sensor.py"],
-    ["sensor_pack/bus_service.py", "github:octaprog7/bmp581/sensor_pack/bus_service.py"],
-    ["sensor_pack/converter.py", "github:octaprog7/bmp581/sensor_pack/converter.py"],
-    ["sensor_pack/crc_mod.py", "github:octaprog7/bmp581/sensor_pack/crc_mod.py"],
-    ["sensor_pack/geosensmod.py", "github:octaprog7/bmp581/sensor_pack/geosensmod.py"]
+    ["sensor_pack/bus_service.py", "github:octaprog7/bmp581/sensor_pack/bus_service.py"]
   ],
-  "version": "1.0.0",
+  "version": "1.2.0",
   "deps": []
 }
