@@ -6,7 +6,8 @@ from micropython import const
 from collections import namedtuple
 
 from sensor_pack_2 import bus_service
-from sensor_pack_2.base_sensor import IDentifier, IBaseSensorEx, DeviceEx, Iterator, check_value
+from sensor_pack_2.bmp_common import IBMPCommon, OversamplingCoeff, MeasChannels, MeasuredParams, SensorID
+from sensor_pack_2.base_sensor import IDentifier, IBaseSensorEx, DeviceEx, Iterator, check_value, all_none
 
 # ВНИМАНИЕ: не подключайте питание датчика к 5В, иначе датчик выйдет из строя! Только 3.3В!!!
 # WARNING: do not connect "+" to 5V or the sensor will be damaged!
@@ -26,11 +27,6 @@ def _get_conv_time_ms(temp_only: bool, osr_t: int, osr_p: int) -> float:
     if temp_only:
         return tmp
     return tmp + _osr_p_times[osr_p]
-
-
-def _all_none(*args):
-    """возвращает Истина, если все входные параметры в None"""
-    return all(arg is None for arg in args)
 
 
 # BMP581 Register Addresses (used regis only)
@@ -81,11 +77,10 @@ _CMD_EXTMODE_MID = const(0xB4)       # Extended mode sequence middle
 _CMD_EXTMODE_LAST = const(0x69)      # Enable extended/debug pages
 
 
-BMP581_ID = namedtuple("BMP581_ID", "chip_id asic_rev_id")
 asic_status = namedtuple("asic_status", "i3c_err_3 i3c_err_0 hif_mode")
 
 
-class Bmp581(IDentifier, IBaseSensorEx, Iterator):
+class Bmp581(IDentifier, IBaseSensorEx, Iterator, IBMPCommon):
     """Класс для работы с датчиком давления Bosch BMP581."""
 
     def __init__(self, adapter: bus_service.BusAdapter, address=0x47):
@@ -99,6 +94,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
         self._osr_p = 1
         self._mode = 0  # sleep mode
         self._temperature_only = False
+        self._odr = 5
 
     def init_hardware(self):
         """Метод инициализации. Нужно вызывать после конструктора!
@@ -114,45 +110,6 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
         # На момент написания кода, деструкторы в MicroPython не вызываются!
         del self._buf_3
         del self._buf_2
-
-    @property
-    def power_mode(self) -> int:
-        """текущий режим работы"""
-        return self._get_power_mode_or_odr()
-
-    @property
-    def temp_oversampling(self) -> int:
-        """Возвращает текущие настройки передискретизации температуры из датчика"""
-        tmp = self._osr_config()
-        return 0x07 & tmp
-
-    @temp_oversampling.setter
-    def temp_oversampling(self, value: int):
-        r = range(8)
-        check_value(value, r, f"Значение вне диапазона: {r.start}..{r.stop - 1}")
-        self._osr_t = value
-
-    @property
-    def pressure_oversampling(self) -> int:
-        """Возвращает текущие настройки передискретизации давления из датчика"""
-        tmp = self._osr_config()
-        return (0b0011_1000 & tmp) >> 3
-
-    @pressure_oversampling.setter
-    def pressure_oversampling(self, value: int):
-        r = range(8)
-        check_value(value, r, f"Значение вне диапазона: {r.start}..{r.stop - 1}")
-        self._osr_p = value
-
-    @property
-    def temperature_only(self) -> bool:
-        """Если истина, то датчик измеряет только температуру, иначе температуру и давление"""
-        return self._temperature_only
-
-    @temperature_only.setter
-    def temperature_only(self, value):
-        """Если истина, то датчик измеряет только температуру, иначе температуру и давление"""
-        self._temperature_only = value
 
     def _cmd(self, command_code: int):
         """записывает в CMD регистр command_code"""
@@ -170,7 +127,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
     ) -> int | None:
         """Interrupt configuration register. Если все параметры в None, возвращает содержимое ICR"""
         val = self._connector.read_reg(_REG_ADDR_INT_CONFIG, 1)[0]
-        if _all_none(int_mode, int_pol, int_od, int_en, pad_int_drv):
+        if all_none(int_mode, int_pol, int_od, int_en, pad_int_drv):
             return val
         check_value(pad_int_drv, range(0x10), f"Неверное значение pad_int_drv: {pad_int_drv}")
         if pad_int_drv is not None:
@@ -201,7 +158,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
     ) -> int | None:
         """Interrupt source selection register. Если все параметры в None, возвращает содержимое ISSR"""
         val = self._connector.read_reg(_REG_ADDR_INT_SOURCE, 1)[0]
-        if _all_none(oor_p_en, fifo_ths_en, fifo_full_en, drdy_data_reg_en):
+        if all_none(oor_p_en, fifo_ths_en, fifo_full_en, drdy_data_reg_en):
             return val
         if oor_p_en is not None:
             val &= ~(1 << 3)  # mask
@@ -226,7 +183,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
     ) -> int | None:
         """FIFO config. Если все параметры метода None, то возвращает значение регистра!"""
         val = self._connector.read_reg(_REG_ADDR_FIFO_CONFIG, 1)[0]
-        if _all_none(fifo_mode, fifo_threshold):
+        if all_none(fifo_mode, fifo_threshold):
             return val
         check_value(fifo_threshold, range(32), f"Неверное значение fifo_threshold: {fifo_threshold}")
         if fifo_mode is not None:
@@ -249,7 +206,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
         ODR_CONFIG.flag odr_is_valid. Если настроенные параметры ODR/OSR недействительны, будут использоваться
         настройки OSR по умолчанию."""
         val = self._connector.read_reg(_REG_ADDR_ODR_CONFIG, 1)[0]
-        if _all_none(deep_dis, output_data_rate, power_mode):
+        if all_none(deep_dis, output_data_rate, power_mode):
             return val
         check_value(output_data_rate, range(32), f"Неверное значение ODR: {output_data_rate}")
         check_value(power_mode, range(4), f"Неверное значение power mode: {power_mode}")
@@ -276,7 +233,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
     ) -> int | None:
         """FIFO selection config. Если все параметры метода None, то возвращает значение регистра!"""
         val = self._connector.read_reg(_REG_ADDR_FIFO_SEL, 1)[0]
-        if _all_none(fifo_dec_sel, fifo_frame_sel):
+        if all_none(fifo_dec_sel, fifo_frame_sel):
             return val
         check_value(fifo_dec_sel, range(8), f"Неверное значение fifo_dec_sel: {fifo_dec_sel}")
         check_value(fifo_frame_sel, range(4), f"Неверное значение fifo_frame_sel: {fifo_frame_sel}")
@@ -289,12 +246,12 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
         self._connector.write_reg(_REG_ADDR_FIFO_SEL, val, 1)
         return None
 
-    def get_id(self) -> BMP581_ID:
+    def get_id(self) -> SensorID:
         """Возвращает идентификатор датчика и его revision ID.
         Returns the ID and revision ID of the sensor."""
         buf = self._buf_2
         self._connector.read_buf_from_mem(_REG_ADDR_CHIP_ID, buf, 1)
-        return BMP581_ID(chip_id=buf[0], asic_rev_id=buf[1])
+        return SensorID(buf[0], buf[1], None, None)
 
     def get_status(self, status_source: int = 2) -> None | asic_status | tuple:
         """Возвращает состояние аппаратного модуля датчика.
@@ -339,7 +296,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
                     comp_pt_en: int | None = None,     # bit 1..0, компенсация датчика. bit 0 - компенсация температуры; bit 1 - компенсация давления (Это поле невозможно записать во время текущего преобразования давления/температуры.)
                     ) -> None | int:
         val = self._connector.read_reg(_REG_ADDR_DSP_CONFIG, 1)[0]
-        if _all_none(oor_sel_iir_p, fifo_sel_iir_p, shdw_sel_iir_p, fifo_sel_iir_t, shdw_sel_iir_t, iir_flush_forced_en,
+        if all_none(oor_sel_iir_p, fifo_sel_iir_p, shdw_sel_iir_p, fifo_sel_iir_t, shdw_sel_iir_t, iir_flush_forced_en,
                      comp_pt_en):
             return val
         if oor_sel_iir_p is not None:
@@ -371,7 +328,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
                         set_iir_t: int | None = None,  # bit 2..0, Выбор IIR LPF фильтра температуры. Коэффициент фильтра. 0 - фильтр отключен, 0x07 - коэфф. фильтра 127. (Это поле невозможно записать во время текущего преобразования давления/температуры.)
                         ) -> None | int:
         val = self._connector.read_reg(_REG_ADDR_DSP_IIR, 1)[0]
-        if _all_none(set_iir_p, set_iir_t):
+        if all_none(set_iir_p, set_iir_t):
             return val
         if set_iir_p is not None:
             val &= ~(0b111 << 3)  # mask
@@ -396,13 +353,13 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
         check_value(temp_iir, range(8), f"Неверное значение temp_iir: {temp_iir}")
         self._dsp_iir_config(press_iir, temp_iir)
 
-    @property
-    def iir_config(self) -> tuple:
-        """Возвращает кортеж значений в виде: Коэффициент полосового фильтра LPF для давления,
-        Коэффициент полосового фильтра LPF для температуры.
-        Коэффициенты в диапазоне 0..7 включительно"""
-        tmp = self._dsp_iir_config()
-        return (0b0011_1000 & tmp) >> 3, 0b0000_0111 & tmp
+#    @property
+#    def iir_config(self) -> tuple:
+#        """Возвращает кортеж значений в виде: Коэффициент полосового фильтра LPF для давления,
+#        Коэффициент полосового фильтра LPF для температуры.
+#        Коэффициенты в диапазоне 0..7 включительно"""
+#        tmp = self._dsp_iir_config()
+#        return (0b0011_1000 & tmp) >> 3, 0b0000_0111 & tmp
 
     def _osr_config(self,
                     press_en: bool | None = None,  # bit 6, Если Истина, то включается измерение давления датчиком. В противном случае выполняются только измерения температуры.
@@ -411,7 +368,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
                     ) -> None | int:
         """Oversampling rates"""
         val = self._connector.read_reg(_REG_ADDR_OSR_CONFIG, 1)[0]
-        if _all_none(press_en, osr_p, osr_t):
+        if all_none(press_en, osr_p, osr_t):
             return val
         if press_en is not None:
             val &= ~(1 << 6)  # mask
@@ -439,8 +396,7 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
         #       osr_t_eff,      osr_p_eff,              odr_is_valid
         return 0b0111 & val, (0b0011_1000 & val) >> 3, 0 != (0b1000_0000 & val)
 
-    @property
-    def effective_osr_rating(self) -> tuple:
+    def get_effective_osr_rating(self) -> tuple:
         """вычисляемые для текущей ODR значения OSR. Только для чтения.
         Если последний элемент кортежа (odr_is_valid) Истина, то параметризация ODR верна!"""
         return self._eff_osr_config()
@@ -481,7 +437,8 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
         self._connector.write_reg(_REG_ADDR_CMD, _CMD_SOFT_RESET, 1)
 
 
-    def start_measurement(self, mode: int = 1, output_data_rate: int = 10) -> bool:
+#    def start_measurement(self, mode: int = 1, output_data_rate: int = 10) -> bool:
+    def start_measurement(self) -> bool:
         """ # mode:
         0 - Режим ожидания: измерения не производятся.
         1 - Нормальный режим: измерение с частотой output_data_rate.
@@ -489,14 +446,11 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
         3 - Непрерывный режим: измерения с наибольшей частотой при текущих настройках.
         Возвращает бит odr_is_valid регистра OSR_EFF для проверки правильности output_data_rate в комбинации с
         temperature oversampling и pressure oversampling"""
-        if mode not in range(4):
-            raise ValueError(f"Неверное значение режима работы: {mode}")
-        _osr_t = self.temp_oversampling
-        _osr_p = self.pressure_oversampling
-        press_enable = not self.temperature_only
+        _osr_t = self._osr_t
+        _osr_p = self._osr_p
+        press_enable = not self._temperature_only
         self._osr_config(press_enable, _osr_p, _osr_t)
-        self._odr_config(True, output_data_rate, mode)
-        self._mode = mode
+        self._odr_config(True, self._odr, self._mode)
         # чтобы можно было точнее(!) вычислить время преобразования, обновляю поля класса
         self._osr_t, self._osr_p, odr_is_valid = self._eff_osr_config()
         # возвращаю поле odr_is_valid регистра OSR_EFF
@@ -535,13 +489,144 @@ class Bmp581(IDentifier, IBaseSensorEx, Iterator):
     @micropython.native
     def get_conversion_cycle_time(self) -> float:
         """возвращает время преобразования в [мс] датчиком температуры или давления в зависимости от его настроек"""
-        return _get_conv_time_ms(self.temperature_only, self.temp_oversampling, self.pressure_oversampling)
+        return _get_conv_time_ms(self._temperature_only, self._osr_t, self._osr_p)
 
     # Iterator
-    def __next__(self) -> tuple | float | None:
+    def __next__(self) -> None | MeasuredParams:
         if not self.is_data_ready():
             return None  # No data!
         temperature = self.get_temperature()
-        if self.temperature_only:
-            return temperature
-        return self.get_pressure(), temperature
+        if self._temperature_only:
+            return MeasuredParams(temperature=temperature, pressure=None)
+        pressure = self.get_pressure()
+        return MeasuredParams(temperature=temperature, pressure=pressure)
+
+    def set_oversampling(self, temp: int | None = None, press: int | None = None) -> OversamplingCoeff:
+        """Устанавливает oversampling. Записывает в регистр OSR_CONFIG только если заданы параметры.
+        Всегда считывает текущее состояние из регистра, обновляет кэш и возвращает OversamplingCoeff."""
+        if temp is not None or press is not None:
+            valid_rng = range(8)
+            # недостающие значения из кэша
+            t = check_value(temp, valid_rng, f"Invalid temp oversample: {temp}") if temp is not None else self._osr_t
+            p = check_value(press, valid_rng, f"Invalid press oversample: {press}") if press is not None else self._osr_p
+            self._osr_config(press_en=not self._temperature_only, osr_p=p, osr_t=t)
+            self._osr_t, self._osr_p = t, p
+
+        # чтение и возврат
+        reg = self._connector.read_reg(_REG_ADDR_OSR_CONFIG, 1)[0]
+        self._osr_t = reg & 0b111
+        self._osr_p = (reg >> 3) & 0b111
+        return OversamplingCoeff(temperature=self._osr_t, pressure=self._osr_p)
+
+    def set_channels(self, temp_en=None, press_en=None) -> MeasChannels:
+        """Включает/выключает каналы. Если аргументы != None -> записывает в OSR_CONFIG.
+        Всегда считывает текущее состояние из регистра, обновляет кэш и возвращает MeasChannels."""
+        if temp_en is not None or press_en is not None:
+            if temp_en is not None:
+                # Для BMP581: temp_en=False означает "измерять только давление"
+                # Но датчик всегда измеряет температуру для компенсации, поэтому просто обновляю флаг
+                pass
+            if press_en is not None:
+                self._temperature_only = not press_en
+            # Применяем к регистру
+            self._osr_config(press_en=not self._temperature_only)
+
+        # текущее состояние
+        reg = self._connector.read_reg(_REG_ADDR_OSR_CONFIG, 1)[0]
+        press_active = bool(reg & 0b0100_0000)  # bit 6
+        self._temperature_only = not press_active
+        # BMP581 всегда измеряет температуру, давление — опционально
+        return MeasChannels(temperature=True, pressure=press_active)
+
+    def set_iir_filter(self, temp: int | None = None, press: int | None = None) -> tuple[int | None, int | None]:
+        """Устанавливает раздельные коэффициенты ФНЧ для температуры и давления.
+
+        Если аргументы != None -> записывает в регистр DSP_IIR (0x31).
+        Всегда считывает текущее состояние из регистра, обновляет кэш и возвращает кортеж.
+
+        Args:
+            temp (int | None): Коэффициент для температуры (0..7). 0=off, 7=max. None = не менять.
+            press (int | None): Коэффициент для давления (0..7). None = не менять.
+        Returns:
+            tuple[int | None, int | None]: (temp_iir, press_iir) — фактические значения из регистра.
+        """
+        if temp is not None or press is not None:
+            valid_rng = range(8)
+            # Читаем текущее состояние регистра
+            reg = self._connector.read_reg(_REG_ADDR_DSP_IIR, 1)[0]
+
+            if temp is not None:
+                # Биты 2:0 — температура
+                reg = (reg & 0b1111_1000) | (check_value(temp, valid_rng, f"Invalid temp IIR: {temp}") & 0b111)
+            if press is not None:
+                # Биты 5:3 — давление
+                reg = (reg & 0b1100_0111) | (
+                            (check_value(press, valid_rng, f"Неверное значение IIR: {press}") & 0b111) << 3)
+
+            self._connector.write_reg(_REG_ADDR_DSP_IIR, reg, 1)
+
+        # чтение значений
+        reg = self._connector.read_reg(_REG_ADDR_DSP_IIR, 1)[0]
+        t_iir = reg & 0b111
+        p_iir = (reg >> 3) & 0b111
+        return t_iir, p_iir
+
+    def refresh_config(self):
+        """Перечитывает настройки из регистров датчика во внутренний кэш."""
+        # OSR_CONFIG
+        reg = self._connector.read_reg(_REG_ADDR_OSR_CONFIG, 1)[0]
+        self._osr_t = reg & 0b111
+        self._osr_p = (reg >> 3) & 0b111
+        self._temperature_only = not bool(reg & 0b0100_0000)
+
+        # ODR_CONFIG → режим
+        reg = self._connector.read_reg(_REG_ADDR_ODR_CONFIG, 1)[0]
+        self._mode = reg & 0b11
+
+    def get_calibration(self, index: int | None = None) -> int:
+        """BMP581 не предоставляет пользовательский доступ к калибровочным коэффициентам."""
+        if index is None:
+            return 0
+        return 0
+
+    def set_power_mode(self, value: int | None = None) -> int:
+        """Устанавливает или возвращает режим работы датчика.
+        Если value is None -> считывает из регистра ODR_CONFIG и возвращает.
+        Иначе -> сохраняет в кэш. Запись в регистр произойдёт в start_measurement().
+
+        Args:
+            value (int | None): 0=Standby, 1=Normal, 2=Forced, 3=Continuous. None = прочитать.
+        Returns:
+            int: Фактический режим из регистра.
+        """
+        if value is None:
+            # чтение из регистра
+            reg = self._connector.read_reg(_REG_ADDR_ODR_CONFIG, 1)[0]
+            return reg & 0b11  # биты 1:0
+
+        if value not in range(4):
+            raise ValueError(f"Задан неверный mode: {value}")
+        self._mode = value  # сохраняем в кэш
+        return self._mode
+
+    def set_sampling_period(self, odr: int | None = None) -> int:
+        """Устанавливает или возвращает Output Data Rate (ODR).
+        Если odr != None -> записывает в регистр ODR_CONFIG.
+        Всегда считывает текущее состояние, обновляет кэш и возвращает его.
+
+        Args:
+            odr (int | None): Значение ODR (0..31). None = прочитать.
+        Returns:
+            int: Фактическое значение ODR из регистра.
+        """
+        if odr is not None:
+            o = check_value(odr, range(32), f"Неверное значение ODR: {odr}")
+            # Читаем регистр, чтобы сохранить другие биты (deep_dis, pwr_mode)
+            reg = self._connector.read_reg(_REG_ADDR_ODR_CONFIG, 1)[0]
+            reg = (reg & 0b1000_0011) | ((o & 0x1F) << 2)  # биты 6:2
+            self._connector.write_reg(_REG_ADDR_ODR_CONFIG, reg, 1)
+
+        # Всегда читаем подтверждение
+        reg = self._connector.read_reg(_REG_ADDR_ODR_CONFIG, 1)[0]
+        self._odr = (reg >> 2) & 0x1F
+        return self._odr
