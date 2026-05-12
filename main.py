@@ -4,6 +4,7 @@ from time import sleep_ms
 from machine import I2C, Pin
 from micropython import const
 from sensor_pack_2.bus_service import I2cAdapter
+from sensor_pack_2.bmp_common import SensorMode
 
 txt_break = 32 * "-"
 
@@ -76,7 +77,7 @@ if __name__ == '__main__':
     conv_time = ps.get_conversion_cycle_time()  # возвращает мс
     wt_ms = get_wait_time_ms(odr, conv_time)
     print(f"Период выдачи данных [мс]: {wt_ms}")
-    ps.set_power_mode(value=1)  # Normal
+    ps.set_power_mode(value=SensorMode.NORMAL)  # Normal
     ps.set_sampling_period(odr)
     tmp = ps.start_measurement()
     if tmp:
@@ -86,7 +87,7 @@ if __name__ == '__main__':
         sleep_ms(wt_ms)
         if ps.is_data_ready():
             temperature = ps.get_temperature()
-            print(f"Температура [гр. Ц.]: {temperature}")
+            print(f"Температура [гр. Ц.]: {temperature:.2f}")
         else:
             print(f"Нет данных для считывания!")
     print(txt_break)
@@ -95,19 +96,19 @@ if __name__ == '__main__':
     odr = 20    # индекс(!) частоты выдачи данных
     conv_time = ps.get_conversion_cycle_time()  # возвращает мс
     wt_ms = get_wait_time_ms(odr, conv_time)
-    ps.set_power_mode(value=1)
+    ps.set_power_mode(value=SensorMode.NORMAL)
     ps.set_sampling_period(odr)
     tmp = ps.start_measurement()
     for _ in range(ITERATIONS):
         sleep_ms(wt_ms)
         if ps.is_data_ready():
             temperature, pressure = ps.get_temperature(), ps.get_pressure()
-            print(f"Температура [гр. Ц.]: {temperature}; Давление [Па]: {pressure}")
+            print(f"Температура [гр. Ц.]: {temperature:.2f}; Давление [Па]: {pressure:.2f}")
         else:
             print(f"Нет данных для считывания!")
 
     print(txt_break)
-    odr = 5     # индекс(!) частоты выдачи данных
+    odr = 12     # индекс(!) частоты выдачи данных
     conv_time = ps.get_conversion_cycle_time()  # возвращает мс
     wt_ms = get_wait_time_ms(odr, conv_time)
     print("Режим измерения по запросу! Температура и давление!")
@@ -116,8 +117,8 @@ if __name__ == '__main__':
     # синхронизация на базе хоста. Режим измерения по запросу также можно использовать, если требуется ODR выше 240 Гц.
     # задержка перед первым next(), чтобы датчик успел подготовить данные
     ps.temperature_only = False
-    ps.set_power_mode(value=2)  # Forced
-    ps.set_sampling_period(0)  # ODR игнорируется в Forced mode
+    ps.set_power_mode(value=SensorMode.FORCED)
+    ps.set_sampling_period(odr)  # ODR игнорируется в Forced mode
 
     for _ in range(ITERATIONS):
         ps.start_measurement()  # Запускаю измерение
@@ -128,7 +129,7 @@ if __name__ == '__main__':
             # Читаю напрямую, без итератора!
             t = ps.get_temperature()
             p = ps.get_pressure()
-            print(f"Температура [гр. Ц.]: {t}; Давление [Па]: {p}")
+            print(f"Температура [гр. Ц.]: {t:.2f}; Давление [Па]: {p:.2f}")
         else:
             print("Данные не готовы!")
     print(txt_break)
