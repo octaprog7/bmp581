@@ -610,3 +610,13 @@ class Bmp581(IBaseAirPresSensor, Iterator):
                 bool(raw_val & 0x08),  # Бит 3: oor_p
                 bool(raw_val & 0x10),  # Бит 4: por
                 )
+
+    def is_single_shot_mode(self) -> bool:
+        """Возвращает Истина, когда датчик находится в режиме однократных измерений,
+        каждое из которых запускается методом start_measurement"""
+        return SensorMode.FORCED == self.set_power_mode(None)
+
+    def is_continuously_mode(self) -> bool:
+        """Возвращает Истина, когда датчик находится в режиме многократных измерений,
+        производимых автоматически. Процесс запускается методом start_measurement"""
+        return SensorMode.NORMAL == self.set_power_mode(None)
